@@ -1,6 +1,6 @@
 # Federal Regulatory Intelligence
 
-Non-integrated enterprise prototype for tracking federal financial regulators. Pulls live data from the Federal Register API (no key, no backend). Designed to be embedded as an iframe inside a custom tab on SA Pro for a single enterprise client.
+Non-integrated enterprise prototype for tracking federal financial industry regulators. Pulls live data from the Federal Register API (no key, no backend). Designed to be embedded as an iframe inside a custom tab on SA Pro for a single enterprise client.
 
 **Repo:** `State-Affairs-GTM/federal-regulatory-tracker`
 **Live demo:** _add Vercel URL after first deploy_
