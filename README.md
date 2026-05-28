@@ -16,7 +16,7 @@ This is a self-contained web app that lives outside SA Pro's database and render
 - "Browse all Federal Register" toggle for everything else
 - Filter by agency, doc type (Final Rule / Proposed Rule / Notice / Presidential), date range, full-text search
 - "Comments open only" toggle with countdown badges
-- Track rules locally (browser localStorage — per-user, per-device for the demo)
+- Pin rules locally (browser localStorage — per-user, per-device for the demo)
 - Direct download of PDF / HTML / plain text per rule
 - Styled to match SA Pro's visual language so it feels native inside the iframe
 
@@ -113,7 +113,7 @@ Docs: https://www.federalregister.gov/developers/documentation/api/v1
 - lucide-react for icons
 - Inter (Google Fonts)
 - Direct browser → Federal Register API calls (no backend)
-- Tracked items persist in `localStorage` per browser
+- Pinned items persist in `localStorage` per browser
 
 ---
 
@@ -122,8 +122,8 @@ Docs: https://www.federalregister.gov/developers/documentation/api/v1
 - Saved searches + email alerts
 - CFR cross-referencing — "show me all rules touching 12 CFR 225"
 - Regulations.gov comment-docket integration
-- Real backend so tracked items persist across devices
-- SSO into SA Pro user session so tracked state ties to the user, not the browser
+- Real backend so pinned items persist across devices
+- SSO into SA Pro user session so pinned state ties to the user, not the browser
 - Agency hierarchy (Treasury parent → OCC, OFAC, FinCEN children)
 - Move data ingestion server-side so we can join against state-level bill data later
 

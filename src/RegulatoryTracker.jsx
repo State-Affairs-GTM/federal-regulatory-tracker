@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Search, Download, ExternalLink, Building2, FileText, Bookmark, BookmarkCheck, X, Loader2, AlertCircle, Filter, ChevronRight, RefreshCw, Plus, Check } from 'lucide-react';
+import { Search, Download, ExternalLink, Building2, FileText, Pin, X, Loader2, AlertCircle, Filter, ChevronRight, RefreshCw, Plus, Check } from 'lucide-react';
 
 const AGENCIES = [
   { slug: 'comptroller-of-the-currency', short: 'OCC', name: 'Office of the Comptroller of the Currency' },
@@ -47,8 +47,8 @@ export default function RegulatoryTracker() {
   const [commentsOpenOnly, setCommentsOpenOnly] = useState(false);
   const [browseAll, setBrowseAll] = useState(false);
   const [selectedDoc, setSelectedDoc] = useState(null);
-  const [tracked, setTracked] = useState(() => {
-    try { return JSON.parse(window.localStorage?.getItem('sa_tracked') || '[]'); } catch { return []; }
+  const [pinned, setPinned] = useState(() => {
+    try { return JSON.parse(window.localStorage?.getItem('sa_reg_pinned') || '[]'); } catch { return []; }
   });
   const [view, setView] = useState('feed');
   const [showFilters, setShowFilters] = useState(false);
@@ -114,25 +114,25 @@ export default function RegulatoryTracker() {
     }
   };
 
-  const toggleTracked = (doc) => {
-    const exists = tracked.find(t => t.document_number === doc.document_number);
+  const togglePin = (doc) => {
+    const exists = pinned.find(t => t.document_number === doc.document_number);
     const next = exists
-      ? tracked.filter(t => t.document_number !== doc.document_number)
-      : [...tracked, doc];
-    setTracked(next);
-    try { window.localStorage?.setItem('sa_tracked', JSON.stringify(next)); } catch {}
+      ? pinned.filter(t => t.document_number !== doc.document_number)
+      : [...pinned, doc];
+    setPinned(next);
+    try { window.localStorage?.setItem('sa_reg_pinned', JSON.stringify(next)); } catch {}
   };
 
-  const isTracked = (docNum) => tracked.some(t => t.document_number === docNum);
+  const isPinned = (docNum) => pinned.some(t => t.document_number === docNum);
 
   const filtered = useMemo(() => {
-    let result = view === 'tracked' ? tracked : docs;
+    let result = view === 'pinned' ? pinned : docs;
     if (commentsOpenOnly) {
       const today = new Date().toISOString().split('T')[0];
       result = result.filter(d => d.comments_close_on && d.comments_close_on >= today);
     }
     return result;
-  }, [docs, tracked, view, commentsOpenOnly]);
+  }, [docs, pinned, view, commentsOpenOnly]);
 
   const stats = useMemo(() => {
     const today = new Date().toISOString().split('T')[0];
@@ -140,9 +140,9 @@ export default function RegulatoryTracker() {
       total: docs.length,
       rules: docs.filter(d => d.type === 'Rule' || d.type === 'Proposed Rule').length,
       commentsOpen: docs.filter(d => d.comments_close_on && d.comments_close_on >= today).length,
-      tracked: tracked.length,
+      pinned: pinned.length,
     };
-  }, [docs, tracked]);
+  }, [docs, pinned]);
 
   const toggleAgency = (slug) => {
     setSelectedAgencies(prev => prev.includes(slug) ? prev.filter(s => s !== slug) : [...prev, slug]);
@@ -240,7 +240,7 @@ export default function RegulatoryTracker() {
               Federal Regulatory Intelligence
             </h1>
             <p style={{ margin: '4px 0 0', fontSize: 13, color: 'var(--sa-text-secondary)' }}>
-              Track rules, proposed rules, and notices from federal financial regulators.
+              Rules, proposed rules, and notices from federal financial regulators.
             </p>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'var(--sa-bg-elevated)', padding: 3, borderRadius: 6, border: '1px solid var(--sa-border)' }}>
@@ -257,19 +257,19 @@ export default function RegulatoryTracker() {
               Live Feed
             </button>
             <button
-              onClick={() => setView('tracked')}
+              onClick={() => setView('pinned')}
               className="btn"
               style={{
-                background: view === 'tracked' ? 'var(--sa-bg-card)' : 'transparent',
-                color: view === 'tracked' ? 'var(--sa-text-default)' : 'var(--sa-text-secondary)',
+                background: view === 'pinned' ? 'var(--sa-bg-card)' : 'transparent',
+                color: view === 'pinned' ? 'var(--sa-text-default)' : 'var(--sa-text-secondary)',
                 padding: '6px 14px', fontSize: 13, fontWeight: 500, borderRadius: 4,
                 display: 'flex', alignItems: 'center', gap: 6,
-                boxShadow: view === 'tracked' ? '0 1px 2px rgba(0,0,0,0.05)' : 'none',
+                boxShadow: view === 'pinned' ? '0 1px 2px rgba(0,0,0,0.05)' : 'none',
               }}
             >
-              Tracked
-              {tracked.length > 0 && (
-                <span style={{ background: 'var(--sa-text-default)', color: 'var(--sa-bg-card)', borderRadius: 10, padding: '1px 7px', fontSize: 11, fontWeight: 600 }}>{tracked.length}</span>
+              Pinned
+              {pinned.length > 0 && (
+                <span style={{ background: 'var(--sa-text-default)', color: 'var(--sa-bg-card)', borderRadius: 10, padding: '1px 7px', fontSize: 11, fontWeight: 600 }}>{pinned.length}</span>
               )}
             </button>
           </div>
@@ -298,7 +298,7 @@ export default function RegulatoryTracker() {
           <Stat label="Documents in window" value={stats.total} />
           <Stat label="Rules (proposed + final)" value={stats.rules} />
           <Stat label="Comments open" value={stats.commentsOpen} accent="#a16207" />
-          <Stat label="Tracked by you" value={stats.tracked} accent="#1a4d7a" />
+          <Stat label="Pinned by you" value={stats.pinned} accent="#1a4d7a" />
         </div>
       </div>
 
@@ -488,10 +488,10 @@ export default function RegulatoryTracker() {
             <div style={{ padding: 60, textAlign: 'center', color: 'var(--sa-text-muted)' }}>
               <FileText size={28} style={{ opacity: 0.4, marginBottom: 10 }} />
               <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--sa-text-default)' }}>
-                {view === 'tracked' ? 'No tracked documents yet' : 'No documents match your filters'}
+                {view === 'pinned' ? 'Nothing pinned yet' : 'No documents match your filters'}
               </div>
               <div style={{ fontSize: 12, marginTop: 4 }}>
-                {view === 'tracked' ? 'Bookmark a rule from the feed to start tracking.' : 'Try widening your date range or agency selection.'}
+                {view === 'pinned' ? 'Pin a rule from the feed to come back to it.' : 'Try widening your date range or agency selection.'}
               </div>
             </div>
           )}
@@ -500,7 +500,7 @@ export default function RegulatoryTracker() {
             <div style={{ opacity: loading ? 0.5 : 1, transition: 'opacity 0.15s ease', pointerEvents: loading ? 'none' : 'auto' }}>
               <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 12 }}>
                 <h2 style={{ margin: 0, fontSize: 13, fontWeight: 600, color: 'var(--sa-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                  {view === 'tracked' ? 'Your tracked' : (browseAll ? 'All Federal Register' : 'Financial regulators')}
+                  {view === 'pinned' ? 'Your pinned' : (browseAll ? 'All Federal Register' : 'Financial regulators')}
                   <span style={{ color: 'var(--sa-text-muted)', fontWeight: 500, marginLeft: 8 }}>
                     · {filtered.length} {filtered.length === 1 ? 'document' : 'documents'}
                   </span>
@@ -606,17 +606,17 @@ export default function RegulatoryTracker() {
                       {/* actions */}
                       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, flexShrink: 0 }}>
                         <button
-                          onClick={(e) => { e.stopPropagation(); toggleTracked(doc); }}
+                          onClick={(e) => { e.stopPropagation(); togglePin(doc); }}
                           className="btn"
                           style={{
-                            background: isTracked(doc.document_number) ? 'var(--sa-text-default)' : 'var(--sa-bg-card)',
-                            color: isTracked(doc.document_number) ? 'var(--sa-bg-card)' : 'var(--sa-text-muted)',
-                            border: `1px solid ${isTracked(doc.document_number) ? 'var(--sa-text-default)' : 'var(--sa-border)'}`,
+                            background: isPinned(doc.document_number) ? 'var(--sa-text-default)' : 'var(--sa-bg-card)',
+                            color: isPinned(doc.document_number) ? 'var(--sa-bg-card)' : 'var(--sa-text-muted)',
+                            border: `1px solid ${isPinned(doc.document_number) ? 'var(--sa-text-default)' : 'var(--sa-border)'}`,
                             padding: 5, borderRadius: 4, display: 'flex',
                           }}
-                          title={isTracked(doc.document_number) ? 'Untrack' : 'Track'}
+                          title={isPinned(doc.document_number) ? 'Unpin' : 'Pin'}
                         >
-                          {isTracked(doc.document_number) ? <BookmarkCheck size={13} /> : <Bookmark size={13} />}
+                          <Pin size={13} style={isPinned(doc.document_number) ? { fill: 'currentColor' } : undefined} />
                         </button>
                         <ChevronRight size={14} color="var(--sa-text-muted)" />
                       </div>
@@ -701,17 +701,17 @@ export default function RegulatoryTracker() {
                   </a>
                 )}
                 <button
-                  onClick={() => toggleTracked(selectedDoc)}
+                  onClick={() => togglePin(selectedDoc)}
                   className="btn"
                   style={{
-                    background: isTracked(selectedDoc.document_number) ? 'var(--sa-bg-elevated)' : 'var(--sa-bg-card)',
+                    background: isPinned(selectedDoc.document_number) ? 'var(--sa-bg-elevated)' : 'var(--sa-bg-card)',
                     color: 'var(--sa-text-default)',
                     padding: '8px 12px', fontSize: 12, fontWeight: 500,
                     display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-                    border: `1px solid ${isTracked(selectedDoc.document_number) ? 'var(--sa-text-default)' : 'var(--sa-border)'}`, borderRadius: 5,
+                    border: `1px solid ${isPinned(selectedDoc.document_number) ? 'var(--sa-text-default)' : 'var(--sa-border)'}`, borderRadius: 5,
                   }}
                 >
-                  {isTracked(selectedDoc.document_number) ? <><BookmarkCheck size={13} /> Tracked</> : <><Bookmark size={13} /> Track</>}
+                  {isPinned(selectedDoc.document_number) ? <><Pin size={13} style={{ fill: 'currentColor' }} /> Pinned</> : <><Pin size={13} /> Pin</>}
                 </button>
               </div>
 
@@ -871,7 +871,7 @@ function RequestAgencyModal({ onClose }) {
               Request an agency
             </h2>
             <p style={{ margin: '4px 0 0', fontSize: 12, color: 'var(--sa-text-secondary)' }}>
-              Tell us which federal agency to add. We'll email you when it's tracked.
+              Tell us which federal agency to add. We'll email you when it's available.
             </p>
           </div>
           <button
