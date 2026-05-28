@@ -51,6 +51,17 @@ Opens at http://localhost:5173
 
 Every push to `main` redeploys production automatically. PR branches get preview URLs.
 
+### Environment variables (Vercel)
+
+The "Request an agency" modal calls a Vercel serverless function (`/api/request-agency`) that sends mail via [Resend](https://resend.com). Add these in **Vercel → Settings → Environment Variables**:
+
+- `RESEND_API_KEY` — your Resend API key
+- `RESEND_FROM` — optional override of the From header, e.g. `Reg Tracker <noreply@stateaffairs.com>`. Default is `Reg Tracker <noreply@stateaffairs.com>` (requires the sending domain to be verified in Resend).
+
+Requests are sent to `enterprise@stateaffairs.com` (hard-coded in `api/request-agency.js`). The function will return a 500 with `RESEND_API_KEY not configured` if the env var is missing.
+
+For local testing of the API route, use `vercel dev` instead of `npm run dev` (Vite alone won't route `/api/*`).
+
 **CLI alternative:**
 
 ```bash

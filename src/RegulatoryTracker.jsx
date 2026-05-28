@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Search, Download, ExternalLink, Building2, FileText, Bookmark, BookmarkCheck, X, Loader2, AlertCircle, Filter, ChevronRight } from 'lucide-react';
+import { Search, Download, ExternalLink, Building2, FileText, Bookmark, BookmarkCheck, X, Loader2, AlertCircle, Filter, ChevronRight, RefreshCw, Plus, Check } from 'lucide-react';
 
 const AGENCIES = [
   { slug: 'comptroller-of-the-currency', short: 'OCC', name: 'Office of the Comptroller of the Currency' },
@@ -11,18 +11,21 @@ const AGENCIES = [
   { slug: 'treasury-department', short: 'Treasury', name: 'US Treasury' },
 ];
 
+// API quirk: `conditions[type][]` accepts short codes (RULE / PRORULE / NOTICE / PRESDOCU)
+// but the `type` field on each returned document is the human string ("Rule", "Proposed Rule", …).
+// So we key everything user-facing off the response value and keep the code only for the query.
 const DOC_TYPES = [
-  { value: 'RULE', label: 'Final Rule' },
-  { value: 'PRORULE', label: 'Proposed Rule' },
-  { value: 'NOTICE', label: 'Notice' },
-  { value: 'PRESDOCU', label: 'Presidential Doc' },
+  { code: 'RULE', apiType: 'Rule', label: 'Final Rule' },
+  { code: 'PRORULE', apiType: 'Proposed Rule', label: 'Proposed Rule' },
+  { code: 'NOTICE', apiType: 'Notice', label: 'Notice' },
+  { code: 'PRESDOCU', apiType: 'Presidential Document', label: 'Presidential Doc' },
 ];
 
 const TYPE_STYLES = {
-  RULE: { bg: '#e8f3ec', fg: '#1a6b3a', label: 'Final Rule' },
-  PRORULE: { bg: '#fdf3dc', fg: '#7a5a1a', label: 'Proposed Rule' },
-  NOTICE: { bg: '#e8f0f8', fg: '#1a4d7a', label: 'Notice' },
-  PRESDOCU: { bg: '#f8e8e8', fg: '#7a1a1a', label: 'Presidential' },
+  'Rule': { bg: '#e8f3ec', fg: '#1a6b3a', label: 'Final Rule' },
+  'Proposed Rule': { bg: '#fdf3dc', fg: '#7a5a1a', label: 'Proposed Rule' },
+  'Notice': { bg: '#e8f0f8', fg: '#1a4d7a', label: 'Notice' },
+  'Presidential Document': { bg: '#f8e8e8', fg: '#7a1a1a', label: 'Presidential' },
 };
 
 const FIELDS = [
@@ -49,6 +52,15 @@ export default function RegulatoryTracker() {
   });
   const [view, setView] = useState('feed');
   const [showFilters, setShowFilters] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState(null);
+  const [, setTick] = useState(0);
+  const [requestOpen, setRequestOpen] = useState(false);
+
+  // Force re-render every 30s so the "X min ago" label stays current
+  useEffect(() => {
+    const id = setInterval(() => setTick(t => t + 1), 30000);
+    return () => clearInterval(id);
+  }, []);
 
   // Debounce search input to avoid hammering the API
   useEffect(() => {
@@ -63,6 +75,9 @@ export default function RegulatoryTracker() {
   const fetchDocs = async () => {
     setLoading(true);
     setError(null);
+    // On refresh (when we already have content), keep the spinner visible at least 350ms
+    // so users see feedback. On initial load, return as fast as possible.
+    const minDelay = docs.length > 0 ? new Promise(r => setTimeout(r, 350)) : Promise.resolve();
     try {
       const params = new URLSearchParams();
       params.append('per_page', '100');
@@ -89,10 +104,12 @@ export default function RegulatoryTracker() {
       if (!res.ok) throw new Error(`API returned ${res.status}`);
       const data = await res.json();
       setDocs(data.results || []);
+      setLastUpdated(Date.now());
     } catch (e) {
       setError(e.message);
       setDocs([]);
     } finally {
+      await minDelay;
       setLoading(false);
     }
   };
@@ -121,7 +138,7 @@ export default function RegulatoryTracker() {
     const today = new Date().toISOString().split('T')[0];
     return {
       total: docs.length,
-      rules: docs.filter(d => d.type === 'RULE' || d.type === 'PRORULE').length,
+      rules: docs.filter(d => d.type === 'Rule' || d.type === 'Proposed Rule').length,
       commentsOpen: docs.filter(d => d.comments_close_on && d.comments_close_on >= today).length,
       tracked: tracked.length,
     };
@@ -140,6 +157,18 @@ export default function RegulatoryTracker() {
     return new Date(s + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   };
 
+  const relativeTime = (ts) => {
+    if (!ts) return null;
+    const secs = Math.floor((Date.now() - ts) / 1000);
+    if (secs < 30) return 'just now';
+    if (secs < 90) return '1 min ago';
+    const mins = Math.floor(secs / 60);
+    if (mins < 60) return `${mins} min ago`;
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return `${hours} hour${hours > 1 ? 's' : ''} ago`;
+    return new Date(ts).toLocaleDateString();
+  };
+
   const daysUntil = (s) => {
     if (!s) return null;
     const now = new Date();
@@ -151,21 +180,45 @@ export default function RegulatoryTracker() {
   return (
     <div style={{
       minHeight: '100vh',
-      background: '#ffffff',
-      fontFamily: '"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-      color: '#1a1a1a',
+      background: 'var(--sa-bg-page)',
+      fontFamily: 'var(--sa-font-sans)',
+      color: 'var(--sa-text-default)',
       fontSize: 14,
     }}>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Newsreader:wght@400;500;600&display=swap');
+        :root {
+          --sa-font-sans: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+          --sa-font-serif: "Newsreader", Georgia, serif;
+          --sa-bg-page: rgb(250, 248, 245);
+          --sa-bg-card: rgb(252, 252, 252);
+          --sa-bg-elevated: rgb(245, 240, 230);
+          --sa-bg-hover: rgb(245, 240, 230);
+          --sa-text-default: rgb(25, 22, 16);
+          --sa-text-secondary: hsl(0, 0%, 45%);
+          --sa-text-muted: hsl(0, 0%, 60%);
+          --sa-text-link: hsl(221, 83%, 53%);
+          --sa-border: rgb(212, 201, 175);
+          --sa-border-strong: rgb(180, 165, 130);
+          --sa-chip-selected-bg: hsl(213, 97%, 87%);
+          --sa-chip-selected-border: hsl(213, 94%, 68%);
+          --sa-chip-selected-fg: hsl(221, 83%, 28%);
+          --sa-accent-blue: hsl(221, 83%, 53%);
+          --sa-accent-blue-hover: hsl(221, 83%, 45%);
+          --sa-radius-sm: 4px;
+          --sa-radius-md: 6px;
+          --sa-radius-lg: 8px;
+          --sa-radius-pill: 9999px;
+        }
         * { box-sizing: border-box; }
-        body { margin: 0; }
+        body { margin: 0; background: var(--sa-bg-page); }
         .row { transition: background 0.1s ease; cursor: pointer; }
-        .row:hover { background: #faf8f3 !important; }
+        .row:hover { background: var(--sa-bg-hover) !important; }
         .chip { transition: all 0.1s ease; cursor: pointer; user-select: none; }
-        .chip:hover { background: #f5f0e6 !important; }
+        .chip:hover { background: var(--sa-bg-elevated) !important; }
+        .chip-selected:hover { background: hsl(213, 97%, 82%) !important; }
         .btn { transition: all 0.12s ease; cursor: pointer; border: none; }
-        .btn:hover { opacity: 0.85; }
+        .btn:hover { opacity: 0.88; }
         .btn:active { transform: translateY(1px); }
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
         @keyframes slideIn { from { opacity: 0; transform: translateX(12px); } to { opacity: 1; transform: translateX(0); } }
@@ -174,29 +227,29 @@ export default function RegulatoryTracker() {
         .fade-in { animation: fadeIn 0.2s ease-out; }
         .scrollbar::-webkit-scrollbar { width: 8px; height: 8px; }
         .scrollbar::-webkit-scrollbar-track { background: transparent; }
-        .scrollbar::-webkit-scrollbar-thumb { background: #e0d8c4; border-radius: 4px; }
-        .scrollbar::-webkit-scrollbar-thumb:hover { background: #c8bea4; }
-        input:focus, select:focus { outline: 2px solid #1a1a1a; outline-offset: -2px; }
+        .scrollbar::-webkit-scrollbar-thumb { background: var(--sa-border); border-radius: 4px; }
+        .scrollbar::-webkit-scrollbar-thumb:hover { background: var(--sa-border-strong); }
+        input:focus, select:focus { outline: 2px solid var(--sa-text-default); outline-offset: -2px; }
       `}</style>
 
       {/* PAGE HEADER */}
-      <div style={{ padding: '24px 32px 16px', borderBottom: '1px solid #ececec' }}>
+      <div style={{ padding: '24px 32px 16px', borderBottom: '1px solid var(--sa-border)' }}>
         <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
           <div>
-            <h1 style={{ margin: 0, fontSize: 22, fontWeight: 600, color: '#1a1a1a', letterSpacing: '-0.01em' }}>
+            <h1 style={{ margin: 0, fontSize: 20, fontWeight: 500, color: 'var(--sa-text-default)', letterSpacing: '-0.005em', lineHeight: 1.4 }}>
               Federal Regulatory Intelligence
             </h1>
-            <p style={{ margin: '4px 0 0', fontSize: 13, color: '#6a6a6a' }}>
+            <p style={{ margin: '4px 0 0', fontSize: 13, color: 'var(--sa-text-secondary)' }}>
               Track rules, proposed rules, and notices from federal financial regulators.
             </p>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4, background: '#faf8f3', padding: 3, borderRadius: 6, border: '1px solid #ececec' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'var(--sa-bg-elevated)', padding: 3, borderRadius: 6, border: '1px solid var(--sa-border)' }}>
             <button
               onClick={() => setView('feed')}
               className="btn"
               style={{
-                background: view === 'feed' ? '#ffffff' : 'transparent',
-                color: view === 'feed' ? '#1a1a1a' : '#6a6a6a',
+                background: view === 'feed' ? 'var(--sa-bg-card)' : 'transparent',
+                color: view === 'feed' ? 'var(--sa-text-default)' : 'var(--sa-text-secondary)',
                 padding: '6px 14px', fontSize: 13, fontWeight: 500, borderRadius: 4,
                 boxShadow: view === 'feed' ? '0 1px 2px rgba(0,0,0,0.05)' : 'none',
               }}
@@ -207,8 +260,8 @@ export default function RegulatoryTracker() {
               onClick={() => setView('tracked')}
               className="btn"
               style={{
-                background: view === 'tracked' ? '#ffffff' : 'transparent',
-                color: view === 'tracked' ? '#1a1a1a' : '#6a6a6a',
+                background: view === 'tracked' ? 'var(--sa-bg-card)' : 'transparent',
+                color: view === 'tracked' ? 'var(--sa-text-default)' : 'var(--sa-text-secondary)',
                 padding: '6px 14px', fontSize: 13, fontWeight: 500, borderRadius: 4,
                 display: 'flex', alignItems: 'center', gap: 6,
                 boxShadow: view === 'tracked' ? '0 1px 2px rgba(0,0,0,0.05)' : 'none',
@@ -216,7 +269,7 @@ export default function RegulatoryTracker() {
             >
               Tracked
               {tracked.length > 0 && (
-                <span style={{ background: '#1a1a1a', color: '#ffffff', borderRadius: 10, padding: '1px 7px', fontSize: 11, fontWeight: 600 }}>{tracked.length}</span>
+                <span style={{ background: 'var(--sa-text-default)', color: 'var(--sa-bg-card)', borderRadius: 10, padding: '1px 7px', fontSize: 11, fontWeight: 600 }}>{tracked.length}</span>
               )}
             </button>
           </div>
@@ -224,7 +277,23 @@ export default function RegulatoryTracker() {
       </div>
 
       {/* STAT TILES */}
-      <div style={{ padding: '20px 32px', borderBottom: '1px solid #ececec', background: '#fafafa' }}>
+      <div style={{ padding: '20px 32px', borderBottom: '1px solid var(--sa-border)', background: 'var(--sa-bg-page)' }}>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 10, marginBottom: 10, fontSize: 11, color: 'var(--sa-text-secondary)' }}>
+          {lastUpdated && <span>Last updated {relativeTime(lastUpdated)}</span>}
+          <button
+            onClick={fetchDocs}
+            className="btn"
+            disabled={loading}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 4, padding: '3px 8px',
+              background: 'transparent', color: 'var(--sa-text-link)', fontSize: 11, fontWeight: 500,
+              cursor: loading ? 'default' : 'pointer', opacity: loading ? 0.5 : 1,
+            }}
+          >
+            <RefreshCw size={11} style={loading ? { animation: 'spin 1s linear infinite' } : undefined} />
+            Refresh now
+          </button>
+        </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
           <Stat label="Documents in window" value={stats.total} />
           <Stat label="Rules (proposed + final)" value={stats.rules} />
@@ -234,10 +303,10 @@ export default function RegulatoryTracker() {
       </div>
 
       {/* CONTROLS */}
-      <div style={{ padding: '16px 32px', borderBottom: '1px solid #ececec', background: '#ffffff' }}>
+      <div style={{ padding: '16px 32px', borderBottom: '1px solid var(--sa-border)', background: 'var(--sa-bg-card)' }}>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 12, flexWrap: 'wrap' }}>
           <div style={{ position: 'relative', flex: 1, minWidth: 280, maxWidth: 480 }}>
-            <Search size={14} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: '#9a9a9a' }} />
+            <Search size={14} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--sa-text-muted)' }} />
             <input
               type="text"
               placeholder="Search rules, dockets, citations…"
@@ -245,8 +314,8 @@ export default function RegulatoryTracker() {
               onChange={e => setSearchQuery(e.target.value)}
               style={{
                 width: '100%', padding: '8px 12px 8px 34px', fontSize: 13,
-                background: '#ffffff', border: '1px solid #d9d9d9', borderRadius: 6,
-                fontFamily: 'inherit', color: '#1a1a1a',
+                background: 'var(--sa-bg-card)', border: '1px solid var(--sa-border)', borderRadius: 6,
+                fontFamily: 'inherit', color: 'var(--sa-text-default)',
               }}
             />
           </div>
@@ -254,9 +323,9 @@ export default function RegulatoryTracker() {
             value={dateRange}
             onChange={e => setDateRange(e.target.value)}
             style={{
-              padding: '8px 12px', fontSize: 13, background: '#ffffff',
-              border: '1px solid #d9d9d9', borderRadius: 6, fontFamily: 'inherit',
-              color: '#1a1a1a', cursor: 'pointer',
+              padding: '8px 12px', fontSize: 13, background: 'var(--sa-bg-card)',
+              border: '1px solid var(--sa-border)', borderRadius: 6, fontFamily: 'inherit',
+              color: 'var(--sa-text-default)', cursor: 'pointer',
             }}
           >
             <option value="1">Last 24 hours</option>
@@ -270,20 +339,20 @@ export default function RegulatoryTracker() {
             className="btn"
             style={{
               padding: '8px 14px', fontSize: 13, fontWeight: 500,
-              background: showFilters ? '#1a1a1a' : '#ffffff', color: showFilters ? '#ffffff' : '#1a1a1a',
-              border: '1px solid ' + (showFilters ? '#1a1a1a' : '#d9d9d9'), borderRadius: 6,
+              background: showFilters ? 'var(--sa-chip-selected-bg)' : 'var(--sa-bg-card)', color: showFilters ? 'var(--sa-chip-selected-fg)' : 'var(--sa-text-default)',
+              border: '1px solid ' + (showFilters ? 'var(--sa-chip-selected-border)' : 'var(--sa-border)'), borderRadius: 6,
               display: 'flex', alignItems: 'center', gap: 6,
             }}
           >
             <Filter size={13} />
             Filters
           </button>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer', userSelect: 'none', color: '#1a1a1a', marginLeft: 4 }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer', userSelect: 'none', color: 'var(--sa-text-default)', marginLeft: 4 }}>
             <input
               type="checkbox"
               checked={commentsOpenOnly}
               onChange={e => setCommentsOpenOnly(e.target.checked)}
-              style={{ accentColor: '#1a1a1a', width: 14, height: 14 }}
+              style={{ accentColor: 'var(--sa-text-default)', width: 14, height: 14 }}
             />
             Comments open only
           </label>
@@ -291,21 +360,46 @@ export default function RegulatoryTracker() {
 
         {/* Agency chips */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-          <span style={{ fontSize: 11, color: '#9a9a9a', fontWeight: 500, marginRight: 6, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+          <span style={{ fontSize: 11, color: 'var(--sa-text-muted)', fontWeight: 500, marginRight: 6, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
             Agencies
           </span>
+          {!browseAll && (
+            selectedAgencies.length === 0 ? (
+              <button
+                className="btn"
+                onClick={() => setSelectedAgencies(AGENCIES.map(a => a.slug))}
+                style={{
+                  fontSize: 11, fontWeight: 500, background: 'transparent', padding: '2px 4px', marginRight: 4,
+                  color: 'var(--sa-text-link)', cursor: 'pointer',
+                }}
+              >
+                Select all
+              </button>
+            ) : (
+              <button
+                className="btn"
+                onClick={() => setSelectedAgencies([])}
+                style={{
+                  fontSize: 11, fontWeight: 500, background: 'transparent', padding: '2px 4px', marginRight: 4,
+                  color: 'var(--sa-text-link)', cursor: 'pointer',
+                }}
+              >
+                Clear
+              </button>
+            )
+          )}
           {AGENCIES.map(a => {
             const active = !browseAll && selectedAgencies.includes(a.slug);
             return (
               <span
                 key={a.slug}
                 onClick={() => { if (browseAll) setBrowseAll(false); toggleAgency(a.slug); }}
-                className="chip"
+                className={`chip ${active ? 'chip-selected' : ''}`}
                 style={{
-                  padding: '5px 11px', borderRadius: 14, fontSize: 12, fontWeight: 500,
-                  background: active ? '#1a1a1a' : '#ffffff',
-                  color: active ? '#ffffff' : '#4a4a4a',
-                  border: `1px solid ${active ? '#1a1a1a' : '#d9d9d9'}`,
+                  padding: '5px 11px', borderRadius: 'var(--sa-radius-pill)', fontSize: 12, fontWeight: 500,
+                  background: active ? 'var(--sa-chip-selected-bg)' : 'var(--sa-bg-card)',
+                  color: active ? 'var(--sa-chip-selected-fg)' : 'var(--sa-text-default)',
+                  border: `1px solid ${active ? 'var(--sa-chip-selected-border)' : 'var(--sa-border)'}`,
                   opacity: browseAll ? 0.4 : 1,
                 }}
               >
@@ -313,39 +407,51 @@ export default function RegulatoryTracker() {
               </span>
             );
           })}
-          <div style={{ width: 1, height: 16, background: '#d9d9d9', margin: '0 4px' }} />
+          <div style={{ width: 1, height: 16, background: 'var(--sa-border)', margin: '0 4px' }} />
           <span
             onClick={() => setBrowseAll(!browseAll)}
-            className="chip"
+            className={`chip ${browseAll ? 'chip-selected' : ''}`}
             style={{
-              padding: '5px 11px', borderRadius: 14, fontSize: 12, fontWeight: 500,
-              background: browseAll ? '#f5f0e6' : '#ffffff',
-              color: browseAll ? '#1a1a1a' : '#4a4a4a',
-              border: `1px solid ${browseAll ? '#1a1a1a' : '#d9d9d9'}`,
+              padding: '5px 11px', borderRadius: 'var(--sa-radius-pill)', fontSize: 12, fontWeight: 500,
+              background: browseAll ? 'var(--sa-chip-selected-bg)' : 'var(--sa-bg-card)',
+              color: browseAll ? 'var(--sa-chip-selected-fg)' : 'var(--sa-text-default)',
+              border: `1px solid ${browseAll ? 'var(--sa-chip-selected-border)' : 'var(--sa-border)'}`,
             }}
           >
             {browseAll ? '✓ ' : ''}Browse all Federal Register
           </span>
+          <button
+            onClick={() => setRequestOpen(true)}
+            className="btn"
+            style={{
+              display: 'flex', alignItems: 'center', gap: 3, marginLeft: 'auto',
+              padding: '4px 8px', background: 'transparent', color: 'var(--sa-text-link)',
+              fontSize: 11, fontWeight: 500, cursor: 'pointer',
+            }}
+          >
+            <Plus size={12} />
+            Request an agency
+          </button>
         </div>
 
         {/* Type filters, collapsible */}
         {showFilters && (
           <div className="fade-in" style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 11, color: '#9a9a9a', fontWeight: 500, marginRight: 6, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+            <span style={{ fontSize: 11, color: 'var(--sa-text-muted)', fontWeight: 500, marginRight: 6, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
               Document type
             </span>
             {DOC_TYPES.map(t => {
-              const active = selectedTypes.includes(t.value);
+              const active = selectedTypes.includes(t.code);
               return (
                 <span
-                  key={t.value}
-                  onClick={() => toggleType(t.value)}
-                  className="chip"
+                  key={t.code}
+                  onClick={() => toggleType(t.code)}
+                  className={`chip ${active ? 'chip-selected' : ''}`}
                   style={{
-                    padding: '5px 11px', borderRadius: 14, fontSize: 12, fontWeight: 500,
-                    background: active ? '#1a1a1a' : '#ffffff',
-                    color: active ? '#ffffff' : '#4a4a4a',
-                    border: `1px solid ${active ? '#1a1a1a' : '#d9d9d9'}`,
+                    padding: '5px 11px', borderRadius: 'var(--sa-radius-pill)', fontSize: 12, fontWeight: 500,
+                    background: active ? 'var(--sa-chip-selected-bg)' : 'var(--sa-bg-card)',
+                    color: active ? 'var(--sa-chip-selected-fg)' : 'var(--sa-text-default)',
+                    border: `1px solid ${active ? 'var(--sa-chip-selected-border)' : 'var(--sa-border)'}`,
                   }}
                 >
                   {t.label}
@@ -360,8 +466,8 @@ export default function RegulatoryTracker() {
       <div style={{ display: 'grid', gridTemplateColumns: selectedDoc ? 'minmax(0, 1fr) 460px' : '1fr', alignItems: 'flex-start' }}>
         {/* LEFT: feed */}
         <section style={{ padding: '20px 32px 32px' }}>
-          {loading && (
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 60, color: '#9a9a9a' }}>
+          {loading && filtered.length === 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 60, color: 'var(--sa-text-muted)' }}>
               <Loader2 size={18} style={{ animation: 'spin 1s linear infinite' }} />
               <span style={{ marginLeft: 10, fontSize: 13 }}>Loading from Federal Register…</span>
             </div>
@@ -371,17 +477,17 @@ export default function RegulatoryTracker() {
             <div style={{ padding: 16, background: '#fef3f2', border: '1px solid #f5c6c0', borderRadius: 6, display: 'flex', gap: 10, alignItems: 'flex-start' }}>
               <AlertCircle size={18} color="#a13a2a" style={{ flexShrink: 0, marginTop: 1 }} />
               <div>
-                <div style={{ fontSize: 13, fontWeight: 600, color: '#1a1a1a' }}>Connection error</div>
-                <div style={{ fontSize: 12, color: '#6a6a6a', marginTop: 2 }}>{error}</div>
-                <button onClick={fetchDocs} className="btn" style={{ marginTop: 8, background: '#1a1a1a', color: '#ffffff', padding: '5px 12px', fontSize: 12, fontWeight: 500, borderRadius: 4 }}>Retry</button>
+                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--sa-text-default)' }}>Connection error</div>
+                <div style={{ fontSize: 12, color: 'var(--sa-text-secondary)', marginTop: 2 }}>{error}</div>
+                <button onClick={fetchDocs} className="btn" style={{ marginTop: 8, background: 'var(--sa-text-default)', color: 'var(--sa-bg-card)', padding: '5px 12px', fontSize: 12, fontWeight: 500, borderRadius: 4 }}>Retry</button>
               </div>
             </div>
           )}
 
-          {!loading && !error && filtered.length === 0 && (
-            <div style={{ padding: 60, textAlign: 'center', color: '#9a9a9a' }}>
+          {!loading && !error && filtered.length === 0 && lastUpdated && (
+            <div style={{ padding: 60, textAlign: 'center', color: 'var(--sa-text-muted)' }}>
               <FileText size={28} style={{ opacity: 0.4, marginBottom: 10 }} />
-              <div style={{ fontSize: 14, fontWeight: 500, color: '#4a4a4a' }}>
+              <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--sa-text-default)' }}>
                 {view === 'tracked' ? 'No tracked documents yet' : 'No documents match your filters'}
               </div>
               <div style={{ fontSize: 12, marginTop: 4 }}>
@@ -390,23 +496,23 @@ export default function RegulatoryTracker() {
             </div>
           )}
 
-          {!loading && !error && filtered.length > 0 && (
-            <div>
+          {!error && filtered.length > 0 && (
+            <div style={{ opacity: loading ? 0.5 : 1, transition: 'opacity 0.15s ease', pointerEvents: loading ? 'none' : 'auto' }}>
               <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 12 }}>
-                <h2 style={{ margin: 0, fontSize: 13, fontWeight: 600, color: '#6a6a6a', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                <h2 style={{ margin: 0, fontSize: 13, fontWeight: 600, color: 'var(--sa-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
                   {view === 'tracked' ? 'Your tracked' : (browseAll ? 'All Federal Register' : 'Financial regulators')}
-                  <span style={{ color: '#9a9a9a', fontWeight: 500, marginLeft: 8 }}>
+                  <span style={{ color: 'var(--sa-text-muted)', fontWeight: 500, marginLeft: 8 }}>
                     · {filtered.length} {filtered.length === 1 ? 'document' : 'documents'}
                   </span>
                 </h2>
-                <span style={{ fontSize: 11, color: '#9a9a9a', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                <span style={{ fontSize: 11, color: 'var(--sa-text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
                   Newest first
                 </span>
               </div>
 
-              <div style={{ border: '1px solid #ececec', borderRadius: 6, overflow: 'hidden', background: '#ffffff' }}>
+              <div style={{ border: '1px solid var(--sa-border)', borderRadius: 6, overflow: 'hidden', background: 'var(--sa-bg-card)' }}>
                 {filtered.map((doc, idx) => {
-                  const typeStyle = TYPE_STYLES[doc.type] || { bg: '#f0f0f0', fg: '#4a4a4a', label: doc.type };
+                  const typeStyle = TYPE_STYLES[doc.type] || { bg: '#f0f0f0', fg: 'var(--sa-text-default)', label: doc.type };
                   const days = daysUntil(doc.comments_close_on);
                   return (
                     <article
@@ -415,17 +521,17 @@ export default function RegulatoryTracker() {
                       className="row"
                       style={{
                         padding: '14px 16px',
-                        borderBottom: idx < filtered.length - 1 ? '1px solid #ececec' : 'none',
-                        background: selectedDoc?.document_number === doc.document_number ? '#faf8f3' : '#ffffff',
+                        borderBottom: idx < filtered.length - 1 ? '1px solid var(--sa-border)' : 'none',
+                        background: selectedDoc?.document_number === doc.document_number ? 'var(--sa-bg-elevated)' : 'var(--sa-bg-card)',
                         display: 'flex', gap: 14, alignItems: 'flex-start',
                       }}
                     >
                       {/* date column */}
                       <div style={{ flexShrink: 0, width: 48, textAlign: 'center', paddingTop: 2 }}>
-                        <div style={{ fontSize: 18, fontWeight: 600, lineHeight: 1, color: '#1a1a1a' }}>
+                        <div style={{ fontSize: 18, fontWeight: 600, lineHeight: 1, color: 'var(--sa-text-default)' }}>
                           {new Date(doc.publication_date + 'T12:00:00').getDate()}
                         </div>
-                        <div style={{ fontSize: 10, color: '#9a9a9a', marginTop: 3, textTransform: 'uppercase', fontWeight: 500, letterSpacing: '0.04em' }}>
+                        <div style={{ fontSize: 10, color: 'var(--sa-text-muted)', marginTop: 3, textTransform: 'uppercase', fontWeight: 500, letterSpacing: '0.04em' }}>
                           {new Date(doc.publication_date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short' })}
                         </div>
                       </div>
@@ -436,17 +542,21 @@ export default function RegulatoryTracker() {
                           <span style={{
                             fontSize: 10, fontWeight: 600,
                             background: typeStyle.bg, color: typeStyle.fg,
-                            padding: '2px 7px', borderRadius: 3, textTransform: 'uppercase', letterSpacing: '0.03em',
+                            padding: '3px 9px', borderRadius: 'var(--sa-radius-pill)', textTransform: 'uppercase', letterSpacing: '0.04em',
                           }}>
                             {typeStyle.label}
                           </span>
                           {doc.significant && (
-                            <span style={{ fontSize: 10, color: '#a13a2a', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.03em' }}>
+                            <span style={{
+                              fontSize: 10, fontWeight: 600,
+                              color: '#a13a2a', background: '#fef3f2',
+                              padding: '3px 9px', borderRadius: 'var(--sa-radius-pill)', textTransform: 'uppercase', letterSpacing: '0.04em',
+                            }}>
                               ◆ Significant
                             </span>
                           )}
                           {doc.regulation_id_numbers?.[0] && (
-                            <span style={{ fontSize: 11, color: '#9a9a9a' }}>
+                            <span style={{ fontSize: 11, color: 'var(--sa-text-muted)' }}>
                               RIN {doc.regulation_id_numbers[0]}
                             </span>
                           )}
@@ -455,7 +565,7 @@ export default function RegulatoryTracker() {
                               fontSize: 10, fontWeight: 600,
                               color: days <= 7 ? '#a13a2a' : '#a16207',
                               background: days <= 7 ? '#fef3f2' : '#fdf3dc',
-                              padding: '2px 7px', borderRadius: 3, marginLeft: 'auto', textTransform: 'uppercase', letterSpacing: '0.03em',
+                              padding: '3px 9px', borderRadius: 'var(--sa-radius-pill)', marginLeft: 'auto', textTransform: 'uppercase', letterSpacing: '0.04em',
                             }}>
                               Comments close in {days}d
                             </span>
@@ -463,14 +573,14 @@ export default function RegulatoryTracker() {
                         </div>
 
                         <h3 style={{
-                          margin: 0, fontSize: 14, fontWeight: 600, lineHeight: 1.4, color: '#1a1a1a',
+                          margin: 0, fontSize: 14, fontWeight: 600, lineHeight: 1.4, color: 'var(--sa-text-default)',
                         }}>
                           {doc.title}
                         </h3>
 
                         {doc.abstract && (
                           <p style={{
-                            margin: '4px 0 0', fontSize: 12, lineHeight: 1.5, color: '#6a6a6a',
+                            margin: '4px 0 0', fontSize: 12, lineHeight: 1.5, color: 'var(--sa-text-secondary)',
                             display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
                           }}>
                             {doc.abstract}
@@ -479,14 +589,14 @@ export default function RegulatoryTracker() {
 
                         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 8, flexWrap: 'wrap' }}>
                           {doc.agency_names && (
-                            <span style={{ fontSize: 11, color: '#6a6a6a', display: 'flex', alignItems: 'center', gap: 4 }}>
+                            <span style={{ fontSize: 11, color: 'var(--sa-text-secondary)', display: 'flex', alignItems: 'center', gap: 4 }}>
                               <Building2 size={11} color="#9a9a9a" />
                               {doc.agency_names.slice(0, 2).join(' · ')}
                               {doc.agency_names.length > 2 && ` +${doc.agency_names.length - 2}`}
                             </span>
                           )}
                           {doc.citation && (
-                            <span style={{ fontSize: 11, color: '#9a9a9a' }}>
+                            <span style={{ fontSize: 11, color: 'var(--sa-text-muted)' }}>
                               {doc.citation}
                             </span>
                           )}
@@ -499,16 +609,16 @@ export default function RegulatoryTracker() {
                           onClick={(e) => { e.stopPropagation(); toggleTracked(doc); }}
                           className="btn"
                           style={{
-                            background: isTracked(doc.document_number) ? '#1a1a1a' : '#ffffff',
-                            color: isTracked(doc.document_number) ? '#ffffff' : '#9a9a9a',
-                            border: `1px solid ${isTracked(doc.document_number) ? '#1a1a1a' : '#d9d9d9'}`,
+                            background: isTracked(doc.document_number) ? 'var(--sa-text-default)' : 'var(--sa-bg-card)',
+                            color: isTracked(doc.document_number) ? 'var(--sa-bg-card)' : 'var(--sa-text-muted)',
+                            border: `1px solid ${isTracked(doc.document_number) ? 'var(--sa-text-default)' : 'var(--sa-border)'}`,
                             padding: 5, borderRadius: 4, display: 'flex',
                           }}
                           title={isTracked(doc.document_number) ? 'Untrack' : 'Track'}
                         >
                           {isTracked(doc.document_number) ? <BookmarkCheck size={13} /> : <Bookmark size={13} />}
                         </button>
-                        <ChevronRight size={14} color="#c8c8c8" />
+                        <ChevronRight size={14} color="var(--sa-text-muted)" />
                       </div>
                     </article>
                   );
@@ -522,35 +632,39 @@ export default function RegulatoryTracker() {
         {selectedDoc && (
           <aside className="detail-panel" style={{
             position: 'sticky', top: 0, maxHeight: '100vh',
-            background: '#ffffff', borderLeft: '1px solid #ececec',
+            background: 'var(--sa-bg-card)', borderLeft: '1px solid var(--sa-border)',
             display: 'flex', flexDirection: 'column',
           }}>
-            <div style={{ padding: '20px 24px 14px', borderBottom: '1px solid #ececec', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
+            <div style={{ padding: '20px 24px 14px', borderBottom: '1px solid var(--sa-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: 'flex', gap: 6, marginBottom: 8, flexWrap: 'wrap' }}>
                   {(() => {
-                    const ts = TYPE_STYLES[selectedDoc.type] || { bg: '#f0f0f0', fg: '#4a4a4a', label: selectedDoc.type };
+                    const ts = TYPE_STYLES[selectedDoc.type] || { bg: '#f0f0f0', fg: 'var(--sa-text-default)', label: selectedDoc.type };
                     return (
                       <span style={{
                         fontSize: 10, fontWeight: 600,
-                        background: ts.bg, color: ts.fg, padding: '2px 7px', borderRadius: 3, textTransform: 'uppercase', letterSpacing: '0.03em',
+                        background: ts.bg, color: ts.fg, padding: '3px 9px', borderRadius: 'var(--sa-radius-pill)', textTransform: 'uppercase', letterSpacing: '0.04em',
                       }}>{ts.label}</span>
                     );
                   })()}
                   {selectedDoc.significant && (
-                    <span style={{ fontSize: 10, color: '#a13a2a', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.03em', alignSelf: 'center' }}>
+                    <span style={{
+                      fontSize: 10, fontWeight: 600,
+                      color: '#a13a2a', background: '#fef3f2',
+                      padding: '3px 9px', borderRadius: 'var(--sa-radius-pill)', textTransform: 'uppercase', letterSpacing: '0.04em',
+                    }}>
                       ◆ Significant
                     </span>
                   )}
                 </div>
-                <h2 style={{ margin: 0, fontSize: 16, fontWeight: 600, lineHeight: 1.35, color: '#1a1a1a' }}>
+                <h2 style={{ margin: 0, fontFamily: 'var(--sa-font-serif)', fontSize: 22, fontWeight: 500, lineHeight: 1.25, color: 'var(--sa-text-default)', letterSpacing: '-0.005em' }}>
                   {selectedDoc.title}
                 </h2>
               </div>
               <button
                 onClick={() => setSelectedDoc(null)}
                 className="btn"
-                style={{ background: 'transparent', padding: 4, color: '#9a9a9a', border: 'none', flexShrink: 0 }}
+                style={{ background: 'transparent', padding: 4, color: 'var(--sa-text-muted)', border: 'none', flexShrink: 0 }}
                 title="Close"
               >
                 <X size={16} />
@@ -562,7 +676,7 @@ export default function RegulatoryTracker() {
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 6, marginBottom: 20 }}>
                 {selectedDoc.pdf_url && (
                   <a href={selectedDoc.pdf_url} target="_blank" rel="noopener noreferrer" className="btn" style={{
-                    background: '#1a1a1a', color: '#ffffff', padding: '8px 12px', fontSize: 12, fontWeight: 500,
+                    background: 'var(--sa-text-default)', color: 'var(--sa-bg-card)', padding: '8px 12px', fontSize: 12, fontWeight: 500,
                     textDecoration: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, borderRadius: 5,
                   }}>
                     <Download size={13} /> PDF
@@ -570,18 +684,18 @@ export default function RegulatoryTracker() {
                 )}
                 {selectedDoc.html_url && (
                   <a href={selectedDoc.html_url} target="_blank" rel="noopener noreferrer" className="btn" style={{
-                    background: '#ffffff', color: '#1a1a1a', padding: '8px 12px', fontSize: 12, fontWeight: 500,
+                    background: 'var(--sa-bg-card)', color: 'var(--sa-text-default)', padding: '8px 12px', fontSize: 12, fontWeight: 500,
                     textDecoration: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-                    border: '1px solid #d9d9d9', borderRadius: 5,
+                    border: '1px solid var(--sa-border)', borderRadius: 5,
                   }}>
                     <ExternalLink size={13} /> View on FR
                   </a>
                 )}
                 {selectedDoc.raw_text_url && (
                   <a href={selectedDoc.raw_text_url} target="_blank" rel="noopener noreferrer" className="btn" style={{
-                    background: '#ffffff', color: '#1a1a1a', padding: '8px 12px', fontSize: 12, fontWeight: 500,
+                    background: 'var(--sa-bg-card)', color: 'var(--sa-text-default)', padding: '8px 12px', fontSize: 12, fontWeight: 500,
                     textDecoration: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-                    border: '1px solid #d9d9d9', borderRadius: 5,
+                    border: '1px solid var(--sa-border)', borderRadius: 5,
                   }}>
                     <FileText size={13} /> Plain text
                   </a>
@@ -590,11 +704,11 @@ export default function RegulatoryTracker() {
                   onClick={() => toggleTracked(selectedDoc)}
                   className="btn"
                   style={{
-                    background: isTracked(selectedDoc.document_number) ? '#f5f0e6' : '#ffffff',
-                    color: '#1a1a1a',
+                    background: isTracked(selectedDoc.document_number) ? 'var(--sa-bg-elevated)' : 'var(--sa-bg-card)',
+                    color: 'var(--sa-text-default)',
                     padding: '8px 12px', fontSize: 12, fontWeight: 500,
                     display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-                    border: `1px solid ${isTracked(selectedDoc.document_number) ? '#1a1a1a' : '#d9d9d9'}`, borderRadius: 5,
+                    border: `1px solid ${isTracked(selectedDoc.document_number) ? 'var(--sa-text-default)' : 'var(--sa-border)'}`, borderRadius: 5,
                   }}
                 >
                   {isTracked(selectedDoc.document_number) ? <><BookmarkCheck size={13} /> Tracked</> : <><Bookmark size={13} /> Track</>}
@@ -610,7 +724,7 @@ export default function RegulatoryTracker() {
                     badge={(() => {
                       const d = daysUntil(selectedDoc.comments_close_on);
                       if (d === null) return null;
-                      if (d < 0) return { text: 'Closed', color: '#6a6a6a', bg: '#f0f0f0' };
+                      if (d < 0) return { text: 'Closed', color: 'var(--sa-text-secondary)', bg: '#f0f0f0' };
                       if (d === 0) return { text: 'Today', color: '#a13a2a', bg: '#fef3f2' };
                       return { text: `${d}d left`, color: d <= 7 ? '#a13a2a' : '#a16207', bg: d <= 7 ? '#fef3f2' : '#fdf3dc' };
                     })()}
@@ -634,7 +748,7 @@ export default function RegulatoryTracker() {
                 <DetailSection title="Agencies">
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
                     {selectedDoc.agency_names.map((n, i) => (
-                      <div key={i} style={{ fontSize: 12, color: '#1a1a1a', display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <div key={i} style={{ fontSize: 12, color: 'var(--sa-text-default)', display: 'flex', alignItems: 'center', gap: 6 }}>
                         <Building2 size={11} color="#9a9a9a" />
                         {n}
                       </div>
@@ -648,7 +762,7 @@ export default function RegulatoryTracker() {
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
                     {selectedDoc.cfr_references.map((c, i) => (
                       <span key={i} style={{
-                        fontSize: 11, background: '#faf8f3', padding: '3px 8px', borderRadius: 3, color: '#1a1a1a', fontWeight: 500,
+                        fontSize: 11, background: 'var(--sa-bg-elevated)', padding: '3px 8px', borderRadius: 3, color: 'var(--sa-text-default)', fontWeight: 500,
                       }}>
                         {c.title} CFR {c.part}{c.chapter ? ` ch.${c.chapter}` : ''}
                       </span>
@@ -662,8 +776,8 @@ export default function RegulatoryTracker() {
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
                     {selectedDoc.topics.slice(0, 12).map((t, i) => (
                       <span key={i} style={{
-                        fontSize: 11, background: '#ffffff', padding: '3px 8px', borderRadius: 3,
-                        border: '1px solid #ececec', color: '#4a4a4a',
+                        fontSize: 11, background: 'var(--sa-bg-card)', padding: '3px 8px', borderRadius: 3,
+                        border: '1px solid var(--sa-border)', color: 'var(--sa-text-default)',
                       }}>
                         {t}
                       </span>
@@ -674,7 +788,7 @@ export default function RegulatoryTracker() {
 
               {selectedDoc.abstract && (
                 <DetailSection title="Abstract">
-                  <p style={{ fontSize: 12, lineHeight: 1.55, color: '#1a1a1a', margin: 0 }}>
+                  <p style={{ fontSize: 12, lineHeight: 1.55, color: 'var(--sa-text-default)', margin: 0 }}>
                     {selectedDoc.abstract}
                   </p>
                 </DetailSection>
@@ -683,17 +797,201 @@ export default function RegulatoryTracker() {
           </aside>
         )}
       </div>
+
+      {requestOpen && <RequestAgencyModal onClose={() => setRequestOpen(false)} />}
+    </div>
+  );
+}
+
+function RequestAgencyModal({ onClose }) {
+  const [email, setEmail] = useState('');
+  const [agency, setAgency] = useState('');
+  const [note, setNote] = useState('');
+  const [status, setStatus] = useState('idle'); // idle | sending | sent | error
+  const [errorMsg, setErrorMsg] = useState(null);
+
+  const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+  const canSubmit = emailValid && agency.trim().length > 0 && status !== 'sending';
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!canSubmit) return;
+    setStatus('sending');
+    setErrorMsg(null);
+    try {
+      const res = await fetch('/api/request-agency', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email.trim(), agency: agency.trim(), note: note.trim() }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) throw new Error(data.error || `Request failed (${res.status})`);
+      setStatus('sent');
+    } catch (err) {
+      setStatus('error');
+      setErrorMsg(err.message || 'Something went wrong');
+    }
+  };
+
+  const fieldStyle = {
+    width: '100%', padding: '8px 12px', fontSize: 13, fontFamily: 'inherit',
+    background: 'var(--sa-bg-card)', border: '1px solid var(--sa-border)', borderRadius: 6,
+    color: 'var(--sa-text-default)',
+  };
+  const labelStyle = { fontSize: 11, fontWeight: 500, color: 'var(--sa-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 6, display: 'block' };
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 100,
+        background: 'rgba(25, 22, 16, 0.4)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        padding: 20, animation: 'fadeIn 0.15s ease-out',
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: '100%', maxWidth: 460, background: 'var(--sa-bg-card)',
+          borderRadius: 8, border: '1px solid var(--sa-border)',
+          boxShadow: '0 10px 40px rgba(0,0,0,0.15)',
+          animation: 'slideIn 0.18s ease-out',
+        }}
+      >
+        <div style={{ padding: '18px 22px 14px', borderBottom: '1px solid var(--sa-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
+          <div>
+            <h2 style={{ margin: 0, fontFamily: 'var(--sa-font-serif)', fontSize: 22, fontWeight: 500, lineHeight: 1.25, color: 'var(--sa-text-default)' }}>
+              Request an agency
+            </h2>
+            <p style={{ margin: '4px 0 0', fontSize: 12, color: 'var(--sa-text-secondary)' }}>
+              Tell us which federal agency to add. We'll email you when it's tracked.
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="btn"
+            style={{ background: 'transparent', padding: 4, color: 'var(--sa-text-muted)', border: 'none' }}
+            title="Close"
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        {status === 'sent' ? (
+          <div style={{ padding: '32px 22px', textAlign: 'center' }}>
+            <div style={{ width: 44, height: 44, borderRadius: '50%', background: '#e8f3ec', color: '#1a6b3a', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', marginBottom: 12 }}>
+              <Check size={22} />
+            </div>
+            <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--sa-text-default)' }}>Request sent</div>
+            <div style={{ fontSize: 12, color: 'var(--sa-text-secondary)', marginTop: 4 }}>
+              We'll be in touch at {email}.
+            </div>
+            <button
+              onClick={onClose}
+              className="btn"
+              style={{
+                marginTop: 18, padding: '8px 18px', background: 'var(--sa-text-default)',
+                color: 'var(--sa-bg-card)', borderRadius: 6, fontSize: 13, fontWeight: 500,
+              }}
+            >
+              Done
+            </button>
+          </div>
+        ) : (
+          <form onSubmit={submit} style={{ padding: '18px 22px 20px' }}>
+            <div style={{ marginBottom: 14 }}>
+              <label style={labelStyle}>Confirm email</label>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="you@stateaffairs.com"
+                autoFocus
+                required
+                style={fieldStyle}
+              />
+            </div>
+            <div style={{ marginBottom: 14 }}>
+              <label style={labelStyle}>Agency name</label>
+              <input
+                type="text"
+                value={agency}
+                onChange={(e) => setAgency(e.target.value)}
+                placeholder="e.g. Securities and Exchange Commission"
+                required
+                style={fieldStyle}
+              />
+            </div>
+            <div style={{ marginBottom: 14 }}>
+              <label style={labelStyle}>Additional info <span style={{ textTransform: 'none', color: 'var(--sa-text-muted)', fontWeight: 400 }}>(optional)</span></label>
+              <textarea
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                placeholder="Anything else we should know?"
+                rows={4}
+                style={{ ...fieldStyle, resize: 'vertical', minHeight: 80, fontFamily: 'inherit' }}
+              />
+            </div>
+
+            {status === 'error' && (
+              <div style={{
+                marginBottom: 12, padding: '8px 12px', fontSize: 12,
+                background: '#fef3f2', border: '1px solid #f5c6c0', borderRadius: 6,
+                color: '#a13a2a', display: 'flex', gap: 8, alignItems: 'flex-start',
+              }}>
+                <AlertCircle size={14} style={{ flexShrink: 0, marginTop: 1 }} />
+                <span>{errorMsg}</span>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                onClick={onClose}
+                className="btn"
+                style={{
+                  padding: '8px 14px', background: 'var(--sa-bg-card)', color: 'var(--sa-text-default)',
+                  border: '1px solid var(--sa-border)', borderRadius: 6, fontSize: 13, fontWeight: 500,
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={!canSubmit}
+                className="btn"
+                style={{
+                  padding: '8px 14px', background: 'var(--sa-text-default)', color: 'var(--sa-bg-card)',
+                  border: 'none', borderRadius: 6, fontSize: 13, fontWeight: 500,
+                  display: 'flex', alignItems: 'center', gap: 6,
+                  opacity: canSubmit ? 1 : 0.5, cursor: canSubmit ? 'pointer' : 'default',
+                }}
+              >
+                {status === 'sending' && <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} />}
+                {status === 'sending' ? 'Sending…' : 'Send request'}
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
     </div>
   );
 }
 
 function Stat({ label, value, accent }) {
   return (
-    <div style={{ background: '#ffffff', padding: '12px 16px', borderRadius: 6, border: '1px solid #ececec' }}>
-      <div style={{ fontSize: 24, fontWeight: 600, color: accent || '#1a1a1a', lineHeight: 1.1, letterSpacing: '-0.01em' }}>
+    <div style={{ background: 'var(--sa-bg-card)', padding: '12px 16px', borderRadius: 6, border: '1px solid var(--sa-border)' }}>
+      <div style={{ fontSize: 24, fontWeight: 600, color: accent || 'var(--sa-text-default)', lineHeight: 1.1, letterSpacing: '-0.01em' }}>
         {value.toLocaleString()}
       </div>
-      <div style={{ fontSize: 11, color: '#9a9a9a', textTransform: 'uppercase', fontWeight: 500, letterSpacing: '0.04em', marginTop: 4 }}>
+      <div style={{ fontSize: 11, color: 'var(--sa-text-muted)', textTransform: 'uppercase', fontWeight: 500, letterSpacing: '0.04em', marginTop: 4 }}>
         {label}
       </div>
     </div>
@@ -704,8 +1002,8 @@ function DetailSection({ title, children }) {
   return (
     <div style={{ marginBottom: 18 }}>
       <div style={{
-        fontSize: 11, color: '#9a9a9a', textTransform: 'uppercase', fontWeight: 500, letterSpacing: '0.04em',
-        marginBottom: 8, paddingBottom: 5, borderBottom: '1px solid #ececec',
+        fontSize: 11, color: 'var(--sa-text-muted)', textTransform: 'uppercase', fontWeight: 500, letterSpacing: '0.04em',
+        marginBottom: 8, paddingBottom: 5, borderBottom: '1px solid var(--sa-border)',
       }}>
         {title}
       </div>
@@ -717,9 +1015,9 @@ function DetailSection({ title, children }) {
 function DetailRow({ label, value, badge }) {
   return (
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 0', gap: 10 }}>
-      <span style={{ fontSize: 12, color: '#6a6a6a', flexShrink: 0 }}>{label}</span>
+      <span style={{ fontSize: 12, color: 'var(--sa-text-secondary)', flexShrink: 0 }}>{label}</span>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, textAlign: 'right' }}>
-        <span style={{ fontSize: 12, color: '#1a1a1a', fontWeight: 500 }}>
+        <span style={{ fontSize: 12, color: 'var(--sa-text-default)', fontWeight: 500 }}>
           {value}
         </span>
         {badge && (
