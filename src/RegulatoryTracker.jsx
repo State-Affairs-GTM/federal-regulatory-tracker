@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Search, Download, ExternalLink, Building2, FileText, Pin, X, Loader2, AlertCircle, Filter, ChevronRight, RefreshCw, Plus, Check } from 'lucide-react';
+import { Search, Download, ExternalLink, Building2, FileText, Pin, PinOff, X, Loader2, AlertCircle, Filter, ChevronRight, ChevronDown, RefreshCw, Plus, Check, MoreVertical } from 'lucide-react';
 
 const AGENCIES = [
   { slug: 'comptroller-of-the-currency', short: 'OCC', name: 'Office of the Comptroller of the Currency' },
@@ -50,11 +50,12 @@ export default function RegulatoryTracker() {
   const [pinned, setPinned] = useState(() => {
     try { return JSON.parse(window.localStorage?.getItem('sa_reg_pinned') || '[]'); } catch { return []; }
   });
-  const [view, setView] = useState('feed');
   const [showFilters, setShowFilters] = useState(false);
   const [lastUpdated, setLastUpdated] = useState(null);
   const [, setTick] = useState(0);
   const [requestOpen, setRequestOpen] = useState(false);
+  const [pinnedExpanded, setPinnedExpanded] = useState(true);
+  const [menuOpenFor, setMenuOpenFor] = useState(null); // document_number whose kebab menu is open
 
   // Force re-render every 30s so the "X min ago" label stays current
   useEffect(() => {
@@ -126,13 +127,31 @@ export default function RegulatoryTracker() {
   const isPinned = (docNum) => pinned.some(t => t.document_number === docNum);
 
   const filtered = useMemo(() => {
-    let result = view === 'pinned' ? pinned : docs;
+    let result = docs;
     if (commentsOpenOnly) {
       const today = new Date().toISOString().split('T')[0];
       result = result.filter(d => d.comments_close_on && d.comments_close_on >= today);
     }
     return result;
-  }, [docs, pinned, view, commentsOpenOnly]);
+  }, [docs, commentsOpenOnly]);
+
+  // Split the visible feed into pinned-first / everything-else, like SA Pro's 360 nav rail.
+  // Use the pinned localStorage list as the source of truth for what's pinned, but render the
+  // feed object (which has fresh fields) when possible. Otherwise fall back to the stored copy.
+  const { pinnedRows, unpinnedRows } = useMemo(() => {
+    const fedByNum = new Map(filtered.map(d => [d.document_number, d]));
+    const pinnedRows = pinned
+      .map(p => fedByNum.get(p.document_number) || p)
+      // honor comments-open filter on pinned rows too
+      .filter(d => {
+        if (!commentsOpenOnly) return true;
+        const today = new Date().toISOString().split('T')[0];
+        return d.comments_close_on && d.comments_close_on >= today;
+      });
+    const pinnedNums = new Set(pinnedRows.map(d => d.document_number));
+    const unpinnedRows = filtered.filter(d => !pinnedNums.has(d.document_number));
+    return { pinnedRows, unpinnedRows };
+  }, [filtered, pinned, commentsOpenOnly]);
 
   const stats = useMemo(() => {
     const today = new Date().toISOString().split('T')[0];
@@ -175,6 +194,159 @@ export default function RegulatoryTracker() {
     now.setHours(0,0,0,0);
     const then = new Date(s + 'T12:00:00');
     return Math.ceil((then - now) / (1000 * 60 * 60 * 24));
+  };
+
+  // Render a single feed row. `isLast` and `total` are used for the bottom-border treatment.
+  // `inPinnedSection` flips on the pin-icon prefix in the title row.
+  const renderDocRow = (doc, idx, total, inPinnedSection) => {
+    const typeStyle = TYPE_STYLES[doc.type] || { bg: '#f0f0f0', fg: 'var(--sa-text-default)', label: doc.type };
+    const days = daysUntil(doc.comments_close_on);
+    const pinnedNow = isPinned(doc.document_number);
+    const menuOpen = menuOpenFor === doc.document_number;
+    return (
+      <article
+        key={doc.document_number}
+        onClick={() => setSelectedDoc(doc)}
+        className="row"
+        style={{
+          padding: '14px 16px',
+          borderBottom: idx < total - 1 ? '1px solid var(--sa-border)' : 'none',
+          background: selectedDoc?.document_number === doc.document_number ? 'var(--sa-bg-elevated)' : 'var(--sa-bg-card)',
+          display: 'flex', gap: 14, alignItems: 'flex-start', position: 'relative',
+        }}
+      >
+        {/* date column */}
+        <div style={{ flexShrink: 0, width: 48, textAlign: 'center', paddingTop: 2 }}>
+          <div style={{ fontSize: 18, fontWeight: 600, lineHeight: 1, color: 'var(--sa-text-default)' }}>
+            {new Date(doc.publication_date + 'T12:00:00').getDate()}
+          </div>
+          <div style={{ fontSize: 10, color: 'var(--sa-text-muted)', marginTop: 3, textTransform: 'uppercase', fontWeight: 500, letterSpacing: '0.04em' }}>
+            {new Date(doc.publication_date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short' })}
+          </div>
+        </div>
+
+        {/* content */}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6, flexWrap: 'wrap' }}>
+            <span style={{
+              fontSize: 10, fontWeight: 600,
+              background: typeStyle.bg, color: typeStyle.fg,
+              padding: '3px 9px', borderRadius: 'var(--sa-radius-pill)', textTransform: 'uppercase', letterSpacing: '0.04em',
+            }}>
+              {typeStyle.label}
+            </span>
+            {doc.significant && (
+              <span style={{
+                fontSize: 10, fontWeight: 600,
+                color: '#a13a2a', background: '#fef3f2',
+                padding: '3px 9px', borderRadius: 'var(--sa-radius-pill)', textTransform: 'uppercase', letterSpacing: '0.04em',
+              }}>
+                ◆ Significant
+              </span>
+            )}
+            {doc.regulation_id_numbers?.[0] && (
+              <span style={{ fontSize: 11, color: 'var(--sa-text-muted)' }}>
+                RIN {doc.regulation_id_numbers[0]}
+              </span>
+            )}
+            {days !== null && days >= 0 && days <= 30 && (
+              <span style={{
+                fontSize: 10, fontWeight: 600,
+                color: days <= 7 ? '#a13a2a' : '#a16207',
+                background: days <= 7 ? '#fef3f2' : '#fdf3dc',
+                padding: '3px 9px', borderRadius: 'var(--sa-radius-pill)', marginLeft: 'auto', textTransform: 'uppercase', letterSpacing: '0.04em',
+              }}>
+                Comments close in {days}d
+              </span>
+            )}
+          </div>
+
+          <h3 style={{
+            margin: 0, fontSize: 14, fontWeight: 600, lineHeight: 1.4, color: 'var(--sa-text-default)',
+            display: 'flex', alignItems: 'flex-start', gap: 6,
+          }}>
+            {inPinnedSection && (
+              <Pin size={12} style={{ flexShrink: 0, marginTop: 3, fill: 'currentColor', color: 'var(--sa-text-secondary)', transform: 'rotate(-15deg)' }} />
+            )}
+            <span>{doc.title}</span>
+          </h3>
+
+          {doc.abstract && (
+            <p style={{
+              margin: '4px 0 0', fontSize: 12, lineHeight: 1.5, color: 'var(--sa-text-secondary)',
+              display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
+            }}>
+              {doc.abstract}
+            </p>
+          )}
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 8, flexWrap: 'wrap' }}>
+            {doc.agency_names && (
+              <span style={{ fontSize: 11, color: 'var(--sa-text-secondary)', display: 'flex', alignItems: 'center', gap: 4 }}>
+                <Building2 size={11} color="#9a9a9a" />
+                {doc.agency_names.slice(0, 2).join(' · ')}
+                {doc.agency_names.length > 2 && ` +${doc.agency_names.length - 2}`}
+              </span>
+            )}
+            {doc.citation && (
+              <span style={{ fontSize: 11, color: 'var(--sa-text-muted)' }}>
+                {doc.citation}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* actions: kebab menu */}
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, flexShrink: 0, position: 'relative' }}>
+          <button
+            onClick={(e) => { e.stopPropagation(); setMenuOpenFor(menuOpen ? null : doc.document_number); }}
+            className="btn"
+            style={{
+              background: menuOpen ? 'var(--sa-bg-elevated)' : 'transparent',
+              color: 'var(--sa-text-muted)',
+              border: 'none', padding: 4, borderRadius: 4, display: 'flex',
+            }}
+            title="More actions"
+          >
+            <MoreVertical size={16} />
+          </button>
+          <ChevronRight size={14} color="var(--sa-text-muted)" />
+
+          {menuOpen && (
+            <>
+              {/* click-outside catcher */}
+              <div
+                onClick={(e) => { e.stopPropagation(); setMenuOpenFor(null); }}
+                style={{ position: 'fixed', inset: 0, zIndex: 40 }}
+              />
+              <div
+                onClick={(e) => e.stopPropagation()}
+                style={{
+                  position: 'absolute', top: 30, right: 0, zIndex: 50,
+                  minWidth: 160, background: 'var(--sa-bg-card)',
+                  border: '1px solid var(--sa-border)', borderRadius: 6,
+                  boxShadow: '0 8px 24px rgba(0,0,0,0.10)',
+                  padding: 4,
+                }}
+              >
+                <button
+                  onClick={(e) => { e.stopPropagation(); togglePin(doc); setMenuOpenFor(null); }}
+                  className="btn"
+                  style={{
+                    width: '100%', display: 'flex', alignItems: 'center', gap: 8,
+                    padding: '7px 10px', background: 'transparent', color: 'var(--sa-text-default)',
+                    fontSize: 13, fontWeight: 400, borderRadius: 4, textAlign: 'left',
+                  }}
+                >
+                  {pinnedNow ? <PinOff size={14} style={{ transform: 'rotate(-15deg)' }} /> : <Pin size={14} style={{ transform: 'rotate(-15deg)' }} />}
+                  {pinnedNow ? 'Unpin' : 'Pin to top'}
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      </article>
+    );
   };
 
   return (
@@ -242,36 +414,6 @@ export default function RegulatoryTracker() {
             <p style={{ margin: '4px 0 0', fontSize: 13, color: 'var(--sa-text-secondary)' }}>
               Rules, proposed rules, and notices from federal financial regulators.
             </p>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'var(--sa-bg-elevated)', padding: 3, borderRadius: 6, border: '1px solid var(--sa-border)' }}>
-            <button
-              onClick={() => setView('feed')}
-              className="btn"
-              style={{
-                background: view === 'feed' ? 'var(--sa-bg-card)' : 'transparent',
-                color: view === 'feed' ? 'var(--sa-text-default)' : 'var(--sa-text-secondary)',
-                padding: '6px 14px', fontSize: 13, fontWeight: 500, borderRadius: 4,
-                boxShadow: view === 'feed' ? '0 1px 2px rgba(0,0,0,0.05)' : 'none',
-              }}
-            >
-              Live Feed
-            </button>
-            <button
-              onClick={() => setView('pinned')}
-              className="btn"
-              style={{
-                background: view === 'pinned' ? 'var(--sa-bg-card)' : 'transparent',
-                color: view === 'pinned' ? 'var(--sa-text-default)' : 'var(--sa-text-secondary)',
-                padding: '6px 14px', fontSize: 13, fontWeight: 500, borderRadius: 4,
-                display: 'flex', alignItems: 'center', gap: 6,
-                boxShadow: view === 'pinned' ? '0 1px 2px rgba(0,0,0,0.05)' : 'none',
-              }}
-            >
-              Pinned
-              {pinned.length > 0 && (
-                <span style={{ background: 'var(--sa-text-default)', color: 'var(--sa-bg-card)', borderRadius: 10, padding: '1px 7px', fontSize: 11, fontWeight: 600 }}>{pinned.length}</span>
-              )}
-            </button>
           </div>
         </div>
       </div>
@@ -488,10 +630,10 @@ export default function RegulatoryTracker() {
             <div style={{ padding: 60, textAlign: 'center', color: 'var(--sa-text-muted)' }}>
               <FileText size={28} style={{ opacity: 0.4, marginBottom: 10 }} />
               <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--sa-text-default)' }}>
-                {view === 'pinned' ? 'Nothing pinned yet' : 'No documents match your filters'}
+                No documents match your filters
               </div>
               <div style={{ fontSize: 12, marginTop: 4 }}>
-                {view === 'pinned' ? 'Pin a rule from the feed to come back to it.' : 'Try widening your date range or agency selection.'}
+                Try widening your date range or agency selection.
               </div>
             </div>
           )}
@@ -500,7 +642,7 @@ export default function RegulatoryTracker() {
             <div style={{ opacity: loading ? 0.5 : 1, transition: 'opacity 0.15s ease', pointerEvents: loading ? 'none' : 'auto' }}>
               <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 12 }}>
                 <h2 style={{ margin: 0, fontSize: 13, fontWeight: 600, color: 'var(--sa-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                  {view === 'pinned' ? 'Your pinned' : (browseAll ? 'All Federal Register' : 'Financial regulators')}
+                  {browseAll ? 'All Federal Register' : 'Financial regulators'}
                   <span style={{ color: 'var(--sa-text-muted)', fontWeight: 500, marginLeft: 8 }}>
                     · {filtered.length} {filtered.length === 1 ? 'document' : 'documents'}
                   </span>
@@ -511,118 +653,29 @@ export default function RegulatoryTracker() {
               </div>
 
               <div style={{ border: '1px solid var(--sa-border)', borderRadius: 6, overflow: 'hidden', background: 'var(--sa-bg-card)' }}>
-                {filtered.map((doc, idx) => {
-                  const typeStyle = TYPE_STYLES[doc.type] || { bg: '#f0f0f0', fg: 'var(--sa-text-default)', label: doc.type };
-                  const days = daysUntil(doc.comments_close_on);
-                  return (
-                    <article
-                      key={doc.document_number}
-                      onClick={() => setSelectedDoc(doc)}
-                      className="row"
+                {pinnedRows.length > 0 && (
+                  <>
+                    <button
+                      onClick={() => setPinnedExpanded(v => !v)}
+                      className="btn"
                       style={{
-                        padding: '14px 16px',
-                        borderBottom: idx < filtered.length - 1 ? '1px solid var(--sa-border)' : 'none',
-                        background: selectedDoc?.document_number === doc.document_number ? 'var(--sa-bg-elevated)' : 'var(--sa-bg-card)',
-                        display: 'flex', gap: 14, alignItems: 'flex-start',
+                        width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                        padding: '10px 16px', background: 'var(--sa-bg-elevated)',
+                        borderBottom: '1px solid var(--sa-border)',
+                        fontSize: 11, fontWeight: 600, color: 'var(--sa-text-secondary)',
+                        textTransform: 'uppercase', letterSpacing: '0.04em',
                       }}
                     >
-                      {/* date column */}
-                      <div style={{ flexShrink: 0, width: 48, textAlign: 'center', paddingTop: 2 }}>
-                        <div style={{ fontSize: 18, fontWeight: 600, lineHeight: 1, color: 'var(--sa-text-default)' }}>
-                          {new Date(doc.publication_date + 'T12:00:00').getDate()}
-                        </div>
-                        <div style={{ fontSize: 10, color: 'var(--sa-text-muted)', marginTop: 3, textTransform: 'uppercase', fontWeight: 500, letterSpacing: '0.04em' }}>
-                          {new Date(doc.publication_date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short' })}
-                        </div>
-                      </div>
-
-                      {/* content */}
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6, flexWrap: 'wrap' }}>
-                          <span style={{
-                            fontSize: 10, fontWeight: 600,
-                            background: typeStyle.bg, color: typeStyle.fg,
-                            padding: '3px 9px', borderRadius: 'var(--sa-radius-pill)', textTransform: 'uppercase', letterSpacing: '0.04em',
-                          }}>
-                            {typeStyle.label}
-                          </span>
-                          {doc.significant && (
-                            <span style={{
-                              fontSize: 10, fontWeight: 600,
-                              color: '#a13a2a', background: '#fef3f2',
-                              padding: '3px 9px', borderRadius: 'var(--sa-radius-pill)', textTransform: 'uppercase', letterSpacing: '0.04em',
-                            }}>
-                              ◆ Significant
-                            </span>
-                          )}
-                          {doc.regulation_id_numbers?.[0] && (
-                            <span style={{ fontSize: 11, color: 'var(--sa-text-muted)' }}>
-                              RIN {doc.regulation_id_numbers[0]}
-                            </span>
-                          )}
-                          {days !== null && days >= 0 && days <= 30 && (
-                            <span style={{
-                              fontSize: 10, fontWeight: 600,
-                              color: days <= 7 ? '#a13a2a' : '#a16207',
-                              background: days <= 7 ? '#fef3f2' : '#fdf3dc',
-                              padding: '3px 9px', borderRadius: 'var(--sa-radius-pill)', marginLeft: 'auto', textTransform: 'uppercase', letterSpacing: '0.04em',
-                            }}>
-                              Comments close in {days}d
-                            </span>
-                          )}
-                        </div>
-
-                        <h3 style={{
-                          margin: 0, fontSize: 14, fontWeight: 600, lineHeight: 1.4, color: 'var(--sa-text-default)',
-                        }}>
-                          {doc.title}
-                        </h3>
-
-                        {doc.abstract && (
-                          <p style={{
-                            margin: '4px 0 0', fontSize: 12, lineHeight: 1.5, color: 'var(--sa-text-secondary)',
-                            display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
-                          }}>
-                            {doc.abstract}
-                          </p>
-                        )}
-
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 8, flexWrap: 'wrap' }}>
-                          {doc.agency_names && (
-                            <span style={{ fontSize: 11, color: 'var(--sa-text-secondary)', display: 'flex', alignItems: 'center', gap: 4 }}>
-                              <Building2 size={11} color="#9a9a9a" />
-                              {doc.agency_names.slice(0, 2).join(' · ')}
-                              {doc.agency_names.length > 2 && ` +${doc.agency_names.length - 2}`}
-                            </span>
-                          )}
-                          {doc.citation && (
-                            <span style={{ fontSize: 11, color: 'var(--sa-text-muted)' }}>
-                              {doc.citation}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* actions */}
-                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); togglePin(doc); }}
-                          className="btn"
-                          style={{
-                            background: isPinned(doc.document_number) ? 'var(--sa-text-default)' : 'var(--sa-bg-card)',
-                            color: isPinned(doc.document_number) ? 'var(--sa-bg-card)' : 'var(--sa-text-muted)',
-                            border: `1px solid ${isPinned(doc.document_number) ? 'var(--sa-text-default)' : 'var(--sa-border)'}`,
-                            padding: 5, borderRadius: 4, display: 'flex',
-                          }}
-                          title={isPinned(doc.document_number) ? 'Unpin' : 'Pin'}
-                        >
-                          <Pin size={13} style={isPinned(doc.document_number) ? { fill: 'currentColor' } : undefined} />
-                        </button>
-                        <ChevronRight size={14} color="var(--sa-text-muted)" />
-                      </div>
-                    </article>
-                  );
-                })}
+                      <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <Pin size={11} style={{ fill: 'currentColor', transform: 'rotate(-15deg)' }} />
+                        Pinned · {pinnedRows.length}
+                      </span>
+                      <ChevronDown size={14} style={{ transform: pinnedExpanded ? 'rotate(0deg)' : 'rotate(-90deg)', transition: 'transform 0.12s ease' }} />
+                    </button>
+                    {pinnedExpanded && pinnedRows.map((doc, idx) => renderDocRow(doc, idx, pinnedRows.length, true))}
+                  </>
+                )}
+                {unpinnedRows.map((doc, idx) => renderDocRow(doc, idx, unpinnedRows.length, false))}
               </div>
             </div>
           )}
@@ -711,7 +764,7 @@ export default function RegulatoryTracker() {
                     border: `1px solid ${isPinned(selectedDoc.document_number) ? 'var(--sa-text-default)' : 'var(--sa-border)'}`, borderRadius: 5,
                   }}
                 >
-                  {isPinned(selectedDoc.document_number) ? <><Pin size={13} style={{ fill: 'currentColor' }} /> Pinned</> : <><Pin size={13} /> Pin</>}
+                  {isPinned(selectedDoc.document_number) ? <><Pin size={13} style={{ fill: 'currentColor', transform: 'rotate(-15deg)' }} /> Pinned</> : <><Pin size={13} style={{ transform: 'rotate(-15deg)' }} /> Pin</>}
                 </button>
               </div>
 
