@@ -56,6 +56,15 @@ export default function RegulatoryTracker() {
   const [requestOpen, setRequestOpen] = useState(false);
   const [pinnedExpanded, setPinnedExpanded] = useState(true);
   const [menuOpenFor, setMenuOpenFor] = useState(null); // document_number whose kebab menu is open
+  // Track viewport width so we can flip the detail panel between side-by-side and overlay-drawer
+  const [vw, setVw] = useState(typeof window !== 'undefined' ? window.innerWidth : 1200);
+  useEffect(() => {
+    const onResize = () => setVw(window.innerWidth);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  const sideBySide = !!selectedDoc && vw >= 900;
+  const overlayDetail = !!selectedDoc && vw < 900;
 
   // Force re-render every 30s so the "X min ago" label stays current
   useEffect(() => {
@@ -405,7 +414,7 @@ export default function RegulatoryTracker() {
       `}</style>
 
       {/* PAGE HEADER */}
-      <div style={{ padding: '24px 32px 16px', borderBottom: '1px solid var(--sa-border)' }}>
+      <div style={{ padding: '24px clamp(16px, 3vw, 32px) 16px', borderBottom: '1px solid var(--sa-border)' }}>
         <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
           <div>
             <h1 style={{ margin: 0, fontSize: 20, fontWeight: 500, color: 'var(--sa-text-default)', letterSpacing: '-0.005em', lineHeight: 1.4 }}>
@@ -419,7 +428,7 @@ export default function RegulatoryTracker() {
       </div>
 
       {/* STAT TILES */}
-      <div style={{ padding: '20px 32px', borderBottom: '1px solid var(--sa-border)', background: 'var(--sa-bg-page)' }}>
+      <div style={{ padding: '20px clamp(16px, 3vw, 32px)', borderBottom: '1px solid var(--sa-border)', background: 'var(--sa-bg-page)' }}>
         <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 10, marginBottom: 10, fontSize: 11, color: 'var(--sa-text-secondary)' }}>
           {lastUpdated && <span>Last updated {relativeTime(lastUpdated)}</span>}
           <button
@@ -436,7 +445,7 @@ export default function RegulatoryTracker() {
             Refresh now
           </button>
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 12 }}>
           <Stat label="Documents in window" value={stats.total} />
           <Stat label="Rules (proposed + final)" value={stats.rules} />
           <Stat label="Comments open" value={stats.commentsOpen} accent="#a16207" />
@@ -445,7 +454,7 @@ export default function RegulatoryTracker() {
       </div>
 
       {/* CONTROLS */}
-      <div style={{ padding: '16px 32px', borderBottom: '1px solid var(--sa-border)', background: 'var(--sa-bg-card)' }}>
+      <div style={{ padding: '16px clamp(16px, 3vw, 32px)', borderBottom: '1px solid var(--sa-border)', background: 'var(--sa-bg-card)' }}>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 12, flexWrap: 'wrap' }}>
           <div style={{ position: 'relative', flex: 1, minWidth: 280, maxWidth: 480 }}>
             <Search size={14} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--sa-text-muted)' }} />
@@ -605,9 +614,9 @@ export default function RegulatoryTracker() {
       </div>
 
       {/* MAIN */}
-      <div style={{ display: 'grid', gridTemplateColumns: selectedDoc ? 'minmax(0, 1fr) 460px' : '1fr', alignItems: 'flex-start' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: sideBySide ? 'minmax(0, 1fr) minmax(380px, 460px)' : '1fr', alignItems: 'flex-start' }}>
         {/* LEFT: feed */}
-        <section style={{ padding: '20px 32px 32px' }}>
+        <section style={{ padding: '20px clamp(16px, 3vw, 32px) 32px' }}>
           {loading && filtered.length === 0 && (
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 60, color: 'var(--sa-text-muted)' }}>
               <Loader2 size={18} style={{ animation: 'spin 1s linear infinite' }} />
@@ -681,13 +690,32 @@ export default function RegulatoryTracker() {
           )}
         </section>
 
-        {/* RIGHT: detail panel */}
+        {/* RIGHT: detail panel — side-by-side on wide iframes, overlay drawer on narrow */}
+        {overlayDetail && (
+          <div
+            onClick={() => setSelectedDoc(null)}
+            style={{
+              position: 'fixed', inset: 0, zIndex: 60,
+              background: 'rgba(25, 22, 16, 0.35)',
+              animation: 'fadeIn 0.15s ease-out',
+            }}
+          />
+        )}
         {selectedDoc && (
-          <aside className="detail-panel" style={{
-            position: 'sticky', top: 0, maxHeight: '100vh',
-            background: 'var(--sa-bg-card)', borderLeft: '1px solid var(--sa-border)',
-            display: 'flex', flexDirection: 'column',
-          }}>
+          <aside
+            className="detail-panel"
+            onClick={(e) => e.stopPropagation()}
+            style={sideBySide ? {
+              position: 'sticky', top: 0, maxHeight: '100vh',
+              background: 'var(--sa-bg-card)', borderLeft: '1px solid var(--sa-border)',
+              display: 'flex', flexDirection: 'column',
+            } : {
+              position: 'fixed', top: 0, right: 0, bottom: 0, zIndex: 70,
+              width: '92%', maxWidth: 460,
+              background: 'var(--sa-bg-card)', borderLeft: '1px solid var(--sa-border)',
+              boxShadow: '-10px 0 30px rgba(0,0,0,0.12)',
+              display: 'flex', flexDirection: 'column',
+            }}>
             <div style={{ padding: '20px 24px 14px', borderBottom: '1px solid var(--sa-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: 'flex', gap: 6, marginBottom: 8, flexWrap: 'wrap' }}>
