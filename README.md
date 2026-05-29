@@ -75,7 +75,7 @@ vercel --prod       # production deploy
 
 ## Custom subdomain
 
-Once deployed: Vercel project → Settings → Domains → add `reg.stateaffairs.com` (or whatever subdomain we want) → add the CNAME to SA DNS. Takes ~5 minutes once DNS is in place.
+Live at **https://federal-regulatory.stateaffairs.com** (A record `76.76.21.21` in Cloudflare, DNS-only). Vercel auto-issues + renews the cert.
 
 ---
 
@@ -83,7 +83,7 @@ Once deployed: Vercel project → Settings → Domains → add `reg.stateaffairs
 
 ```html
 <iframe
-  src="https://reg.stateaffairs.com"
+  src="https://federal-regulatory.stateaffairs.com/"
   width="100%"
   height="100%"
   style="border: 0; display: block;"
@@ -91,11 +91,13 @@ Once deployed: Vercel project → Settings → Domains → add `reg.stateaffairs
 </iframe>
 ```
 
-The `vercel.json` already sets headers permitting iframing from any origin. Once we're confident about the embed origin, lock it down by editing `vercel.json`:
+`vercel.json` restricts iframing to SA-owned origins via:
 
 ```json
-{ "key": "Content-Security-Policy", "value": "frame-ancestors https://pro.stateaffairs.com https://*.stateaffairs.com" }
+{ "key": "Content-Security-Policy", "value": "frame-ancestors https://pro.stateaffairs.com https://*.stateaffairs.com https://stateaffairs.com" }
 ```
+
+If you need to embed from a Vercel preview or a different host during testing, either add that origin here or temporarily widen to `frame-ancestors *`.
 
 ---
 
